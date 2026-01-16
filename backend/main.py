@@ -13,6 +13,16 @@ load_dotenv()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "finnhub_data.db"))
 
+def parse_symbols(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    raw = value.replace(",", " ").split()
+    return sorted({s.strip().upper() for s in raw if s.strip()})
+
+WATCHLIST_SYMBOLS = parse_symbols(os.environ.get("SYMBOLS"))
+WATCHLIST_MAX = int(os.environ.get("WATCHLIST_MAX", "100"))
+
+
 API_KEY = os.environ.get("FINNHUB_API_KEY")
 if not API_KEY:
     raise RuntimeError("Missing FINNHUB_API_KEY (set it in env or .env)")
@@ -38,77 +48,78 @@ def startup():
 def health():
     return {"ok": True, "db": DB_PATH}
 
+# Nu mai este nevoie de endpoint-ul ingest, am creat un script care sa apeleze automat inserarea datelor in db 
 
-@app.post("/ingest/{symbol}")
-def ingest_symbol(symbol: str):
-    symbol = symbol.strip().upper()
-    if not symbol:
-        raise HTTPException(status_code=400, detail="Empty symbol")
+# @app.post("/ingest/{symbol}")
+# def ingest_symbol(symbol: str):
+#     symbol = symbol.strip().upper()
+#     if not symbol:
+#         raise HTTPException(status_code=400, detail="Empty symbol")
 
-    # Fetch from Finnhub
-    try:
-        profile = client.company_profile2(symbol=symbol) or {}
-        quote = client.quote(symbol) or {}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Finnhub error: {repr(e)}")
+#     # Fetch from Finnhub
+#     try:
+#         profile = client.company_profile2(symbol=symbol) or {}
+#         quote = client.quote(symbol) or {}
+#     except Exception as e:
+#         raise HTTPException(status_code=502, detail=f"Finnhub error: {repr(e)}")
 
-    name = profile.get("name")
-    currency = profile.get("currency")
-    exchange = profile.get("exchange")
-    industry = profile.get("finnhubIndustry")
+#     name = profile.get("name")
+#     currency = profile.get("currency")
+#     exchange = profile.get("exchange")
+#     industry = profile.get("finnhubIndustry")
 
-    current_price = quote.get("c")
-    high_price = quote.get("h")
-    low_price = quote.get("l")
-    open_price = quote.get("o")
-    previous_close = quote.get("pc")
-    quote_ts = quote.get("t")
+#     current_price = quote.get("c")
+#     high_price = quote.get("h")
+#     low_price = quote.get("l")
+#     open_price = quote.get("o")
+#     previous_close = quote.get("pc")
+#     quote_ts = quote.get("t")
 
-    if quote_ts is None:
-        raise HTTPException(status_code=502, detail="Quote missing 't' (timestamp)")
+#     if quote_ts is None:
+#         raise HTTPException(status_code=502, detail="Quote missing 't' (timestamp)")
 
-    # Upsert into SQLite
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
+#     # Upsert into SQLite
+#     conn = get_conn()
+#     try:
+#         cur = conn.cursor()
 
-        cur.execute(
-            """
-            INSERT INTO stocks(symbol, name, currency, exchange, industry, updated_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(symbol) DO UPDATE SET
-              name=excluded.name,
-              currency=excluded.currency,
-              exchange=excluded.exchange,
-              industry=excluded.industry,
-              updated_at=CURRENT_TIMESTAMP;
-            """,
-            (symbol, name, currency, exchange, industry),
-        )
+#         cur.execute(
+#             """
+#             INSERT INTO stocks(symbol, name, currency, exchange, industry, updated_at)
+#             VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+#             ON CONFLICT(symbol) DO UPDATE SET
+#               name=excluded.name,
+#               currency=excluded.currency,
+#               exchange=excluded.exchange,
+#               industry=excluded.industry,
+#               updated_at=CURRENT_TIMESTAMP;
+#             """,
+#             (symbol, name, currency, exchange, industry),
+#         )
 
-        cur.execute(
-            """
-            INSERT INTO quotes_latest(
-              symbol, current_price, high_price, low_price, open_price, previous_close, quote_ts, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(symbol) DO UPDATE SET
-              current_price=excluded.current_price,
-              high_price=excluded.high_price,
-              low_price=excluded.low_price,
-              open_price=excluded.open_price,
-              previous_close=excluded.previous_close,
-              quote_ts=excluded.quote_ts,
-              updated_at=CURRENT_TIMESTAMP;
-            """,
-            (symbol, current_price, high_price, low_price, open_price, previous_close, quote_ts),
-        )
+#         cur.execute(
+#             """
+#             INSERT INTO quotes_latest(
+#               symbol, current_price, high_price, low_price, open_price, previous_close, quote_ts, updated_at
+#             )
+#             VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+#             ON CONFLICT(symbol) DO UPDATE SET
+#               current_price=excluded.current_price,
+#               high_price=excluded.high_price,
+#               low_price=excluded.low_price,
+#               open_price=excluded.open_price,
+#               previous_close=excluded.previous_close,
+#               quote_ts=excluded.quote_ts,
+#               updated_at=CURRENT_TIMESTAMP;
+#             """,
+#             (symbol, current_price, high_price, low_price, open_price, previous_close, quote_ts),
+#         )
 
-        conn.commit()
-    finally:
-        conn.close()
+#         conn.commit()
+#     finally:
+#         conn.close()
 
-    return {"ok": True, "symbol": symbol, "quote_ts": quote_ts}
+#     return {"ok": True, "symbol": symbol, "quote_ts": quote_ts}
 
 
 @app.get("/stocks")
@@ -139,7 +150,23 @@ def get_stock(symbol: str):
     finally:
         conn.close()
 
-
+@app.get("/quotes/latest")
+def quotes_latest(limit: int = 1000, offset: int = 0):
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT symbol, current_price, high_price, low_price, open_price, previous_close, quote_ts, updated_at
+            FROM quotes_latest
+            ORDER BY symbol
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+        
 @app.get("/quotes/latest/{symbol}")
 def get_quote_latest(symbol: str):
     symbol = symbol.strip().upper()
@@ -158,3 +185,31 @@ def get_quote_latest(symbol: str):
         return dict(row)
     finally:
         conn.close()
+
+@app.get("/watchlist")
+def watchlist():
+    return {"symbols": WATCHLIST_SYMBOLS, "source": "env:SYMBOLS"}
+
+@app.get("/watchlist/stocks")
+def watchlist_stocks():
+    symbols = WATCHLIST_SYMBOLS
+    if not symbols:
+        return []
+
+    conn = get_conn()
+    try:
+        placeholders = ",".join(["?"] * len(symbols))
+        rows = conn.execute(
+            f"""
+            SELECT symbol, name, currency, exchange, industry, updated_at
+            FROM stocks
+            WHERE symbol IN ({placeholders})
+            ORDER BY symbol
+            """,
+            tuple(symbols),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
