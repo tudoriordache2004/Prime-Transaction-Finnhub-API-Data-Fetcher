@@ -15,6 +15,17 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 export const api = {
+  refreshSymbol: async (symbol: string) => {
+    const res = await fetch(
+      `${API_BASE_URL}/watchlist/${encodeURIComponent(symbol)}/refresh`,
+      {
+        method: "POST",
+      }
+    )
+    if (!res.ok) throw new Error(`refreshSymbol failed: ${res.status}`)
+    return res.json()
+  },
+
   watchlist: () => getJson<Watchlist>("/watchlist"),
   watchlistStocks: () => getJson<Stock[]>("/watchlist/stocks"),
   stocks: () => getJson<Stock[]>("/stocks"),
@@ -24,4 +35,27 @@ export const api = {
   quotesLatestAll: () => getJson<QuoteLatest[]>("/quotes/latest"),
   quoteLatest: (symbol: string) =>
     getJson<QuoteLatest>(`/quotes/latest/${encodeURIComponent(symbol)}`),
+
+  search: (query: string) =>
+    getJson<any>(`/search?query=${encodeURIComponent(query)}`),
+
+  watchlistAdd: async (symbol: string) => {
+    const res = await fetch(
+      `${API_BASE_URL}/watchlist/${encodeURIComponent(symbol)}`,
+      {
+        method: "POST",
+      }
+    )
+    if (!res.ok) throw new Error(`watchlistAdd failed: ${res.status}`)
+    return res.json()
+  },
+
+  watchlistPurge: async (symbol: string) => {
+    const res = await fetch(
+      `${API_BASE_URL}/watchlist/${encodeURIComponent(symbol)}/purge`,
+      { method: "DELETE" }
+    )
+    if (!res.ok) throw new Error(`watchlistPurge failed: ${res.status}`)
+    return res.json()
+  },
 }

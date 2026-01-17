@@ -1,9 +1,12 @@
 import Link from "next/link"
 import { api } from "../../lib/api"
 import type { QuoteLatest } from "../../lib/types"
+import { WatchlistSearch } from "./WatchlistSearch"
+import { WatchlistRemoveButton } from "./WatchlistRemoveButton"
 
 export default async function WatchlistPage() {
-  const [stocks, quotes] = await Promise.all([
+  const [watchlist, stocks, quotes] = await Promise.all([
+    api.watchlist(),
     api.watchlistStocks(),
     api.quotesLatestAll(),
   ])
@@ -22,6 +25,10 @@ export default async function WatchlistPage() {
           </Link>
         </div>
 
+        <div className="mt-6">
+          <WatchlistSearch existingSymbols={watchlist.symbols} />
+        </div>
+
         <div className="mt-6 overflow-hidden rounded-xl border bg-white">
           <table className="w-full text-sm">
             <thead className="bg-zinc-50 text-left">
@@ -32,6 +39,7 @@ export default async function WatchlistPage() {
                 <th className="text-right">High</th>
                 <th className="text-right">Low</th>
                 <th className="text-right">Updated</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -57,13 +65,17 @@ export default async function WatchlistPage() {
                     <td className="text-right text-zinc-600">
                       {q?.updated_at ?? s.updated_at}
                     </td>
+                    <td className="text-right">
+                      <WatchlistRemoveButton symbol={s.symbol} />
+                    </td>
                   </tr>
                 )
               })}
+
               {stocks.length === 0 && (
                 <tr>
                   <td className="px-4 py-6 text-zinc-600" colSpan={6}>
-                    No stocks in watchlist DB yet. Run ingest and refresh.
+                    Watchlist is empty. Use search above to add symbols.
                   </td>
                 </tr>
               )}
